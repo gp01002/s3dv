@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SBS 立體照片 3D 觀賞器</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans TC", sans-serif; margin: 16px; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+    canvas { max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 8px; }
+    .panel { padding: 12px; border: 1px solid #eee; border-radius: 10px; }
+    label { font-size: 14px; }
+    input[type="range"] { width: 220px; }
+    button { padding: 8px 12px; border-radius: 10px; border: 1px solid #ddd; background: #fff; }
+    button.active { border-color: #333; }
+    .hint { color: #555; font-size: 13px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <h2>SBS 立體照片（左右並排）觀賞器</h2>
+
+  <div class="panel">
+    <div class="row">
+      <label>載入照片（左右並排 SBS）：</label>
+      <input id="file" type="file" accept="image/*" />
+      <button id="demo">載入示範圖（同資料夾 image.jpg）</button>
+    </div>
+    <p class="hint">
+      你可以直接上傳你那張並排立體照。若用「示範圖」，請把檔名改成 <b>image.jpg</b> 並與本 html 放同資料夾。
+    </p>
+  </div>
+
+  <div class="panel">
+    <div class="row">
+      <button id="modeAnaglyph" class="active">紅青立體（Anaglyph）</button>
+      <button id="modeWiggle">Wiggle 3D（左右抖動）</button>
+      <button id="modeSideBySide">左右原圖（檢查用）</button>
+    </div>
+
+    <div class="row" style="margin-top:10px;">
+      <label>視差微調（px）：</label>
+      <input id="shift" type="range" min="-40" max="40" value="0" />
+      <span id="shiftVal">0</span>
+
+      <label style="margin-left:12px;">Wiggle 速度：</label>
+      <input id="speed" type="range" min="120" max="1200" value="450" />
+      <span id="speedVal">450ms</span>
+    </div>
+
+    <p class="hint">
+      <b>紅青立體</b>：戴紅藍眼鏡（紅=左眼、青=右眼）最清楚。<br/>
+      <b>Wiggle</b>：不用眼鏡也會有「景深晃動」感，但比較像視差動畫。
+    </p>
+  </div>
+
+  <canvas id="cv"></canvas>
+
+  <script>
+    const fileEl = document.getElementById('file');
+    const cv = document.getElementById('cv');
+    const ctx = cv.getContext('2d', { willReadFrequently: true });
+
+    const modeBtns = {
+      anaglyph: document.getElementById('modeAnaglyph'),
+      wiggle: document.getElementById('modeWiggle'),
+      sbs: document.getElementById('modeSideBySide'),
+    };
+
+    const shiftEl = document.getElementById('shift');
+    const shiftVal = document.getElementById('shiftVal');
+    const speedEl = document.getElementById('speed');
+    const speedVal = document.getElementById('speedVal');
+
+    const demoBtn = document.getElementById('demo');
+
+    let img = new Image();
+    let mode = 'anaglyph';
+    let wiggleTimer = null;
+    let wiggleSide = 0; // 0 left, 1 right
+
+    function setMode(next) {
+      mode = next;
+      for (const k in modeBtns) modeBtns[k].classList.toggle('active', k === next);
+      render();
+    }
+
+    modeBtns.anaglyph.onclick = () => setMode('anaglyph');
+    modeBtns.wiggle.onclick = () => setMode('wiggle');
+    modeBtns.sbs.onclick = () => setMode('sbs');
+
+    shiftEl.oninput = () => { shiftVal.textContent = shiftEl.value; render(); };
+    speedEl.oninput = () => { speedVal.textContent = speedEl.value + 'ms'; if (mode === 'wiggle') startWiggle(); };
+
+    function stopWiggle() {
+      if (wiggleTimer) { clearInterval(wiggleTimer); wiggleTimer = null; }
+    }
+
+    function startWiggle() {
+      stopWiggle();
+      const ms = Number(speedEl.value);
+      wiggleTimer = setInterval(() => {
+        wiggleSide = 1 - wiggleSide;
+        render();
+      }, ms);
+    }
+
+    function loadFromFile(file) {
+      const url = URL.createObjectURL(file);
+      img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); render(); };
+      img.src = url;
+    }
+
+    fileEl.addEventListener('change', (e) => {
+      const f = e.target.files?.[0];
+      if (f) loadFromFile(f);
+    });
+
+    demoBtn.onclick = () => {
+      img = new Image();
+      img.onload = () => render();
+      img.src = 'image.jpg'; // 放同資料夾
+    };
+
+    function render() {
+      stopWiggle();
+      if (!img || !img.width) return;
+
+      // 假設是左右並排：整張寬度的一半 = 單眼圖
+      const w = img.width;
+      const h = img.height;
+      const halfW = Math.floor(w / 2);
+
+      const shift = Number(shiftEl.value);
+
+      if (mode === 'sbs') {
+        cv.width = w;
+        cv.height = h;
+        ctx.clearRect(0,0,cv.width,cv.height);
+        ctx.drawImage(img, 0, 0);
+        return;
+      }
+
+      // 最終輸出畫布 = 單眼尺寸
+      cv.width = halfW;
+      cv.height = h;
+
+      // 取左/右眼圖到離屏 canvas
+      const offL = document.createElement('canvas');
+      const offR = document.createElement('canvas');
+      offL.width = offR.width = halfW;
+      offL.height = offR.height = h;
+      const lctx = offL.getContext('2d', { willReadFrequently: true });
+      const rctx = offR.getContext('2d', { willReadFrequently: true });
+
+      // 左圖
+      lctx.drawImage(img, 0, 0, halfW, h, 0, 0, halfW, h);
+      // 右圖
+      rctx.drawImage(img, halfW, 0, halfW, h, 0, 0, halfW, h);
+
+      if (mode === 'wiggle') {
+        // 顯示左或右，並加上簡單位移讓立體感更明顯
+        ctx.clearRect(0,0,halfW,h);
+        const dx = wiggleSide === 0 ? -shift : shift;
+        ctx.drawImage(wiggleSide === 0 ? offL : offR, dx, 0);
+        startWiggle();
+        return;
+      }
+
+      // anaglyph: 左圖 -> Red，右圖 -> Green+Blue（Cyan）
+      const L = lctx.getImageData(0, 0, halfW, h);
+      const R = rctx.getImageData(0, 0, halfW, h);
+      const out = ctx.createImageData(halfW, h);
+
+      // 視差微調：用 shift 讓右圖在取樣時偏移
+      // 這裡做最直覺的「右圖取樣 x+shift」
+      const s = shift;
+
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < halfW; x++) {
+          const i = (y * halfW + x) * 4;
+
+          // 左圖像素
+          const rL = L.data[i], gL = L.data[i+1], bL = L.data[i+2];
+
+          // 右圖像素（帶位移）
+          let xr = x + s;
+          if (xr < 0) xr = 0;
+          if (xr >= halfW) xr = halfW - 1;
+          const j = (y * halfW + xr) * 4;
+          const rR = R.data[j], gR = R.data[j+1], bR = R.data[j+2];
+
+          // 輸出：R 用左，GB 用右
+          out.data[i]   = rL;
+          out.data[i+1] = gR;
+          out.data[i+2] = bR;
+          out.data[i+3] = 255;
+        }
+      }
+
+      ctx.putImageData(out, 0, 0);
+    }
+  </script>
+</body>
+</html>
