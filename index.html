@@ -1,494 +1,81 @@
-<!DOCTYPE html>
-<html lang="zh-Hant">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>3D 照片觀賞器 - 智能雙模式版</title>
-    <style>
-        :root { --accent: #ffdd59; --bg: #0a0a0a; }
-        * { box-sizing: border-box; }
-        
-        body {
-            margin: 0; background: var(--bg); color: white;
-            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-            display: flex; flex-direction: column; align-items: center;
-            min-height: 100vh; padding: 20px; overflow-x: hidden;
-        }
-        
-        /* 3D 視窗 */
-        .viewport {
-            position: relative; width: 92vw; max-width: 700px;
-            margin: 30px auto; perspective: 1500px;
-            perspective-origin: center center;
-        }
-        
-        .photo-container {
-            position: relative; width: 100%; border-radius: 25px;
-            overflow: hidden; background: #000;
-            box-shadow: 0 40px 80px rgba(0,0,0,0.9);
-            transform-style: preserve-3d;
-            transition: transform 0.35s cubic-bezier(0.16, 0.84, 0.44, 1),
-                        box-shadow 0.35s ease;
-            will-change: transform;
-        }
-        
-        canvas { 
-            display: block; width: 100%; height: auto;
-            transition: transform 0.35s cubic-bezier(0.16, 0.84, 0.44, 1),
-                        opacity 0.35s cubic-bezier(0.16, 0.84, 0.44, 1),
-                        filter 0.25s ease;
-            will-change: transform, opacity;
-        }
-        
-        #canvasL, #canvasR { 
-            position: absolute; top: 0; left: 0; 
-            width: 100%; height: 100%;
-        }
-        #canvasL { z-index: 1; }
-        #canvasR { z-index: 2; }
-        
-        /* 控制面板 */
-        .controls {
-            width: 92vw; max-width: 700px;
-            background: rgba(255,255,255,0.05);
-            backdrop-filter: blur(10px);
-            border-radius: 20px; padding: 25px;
-            margin: 20px auto;
-        }
-        
-        .mode-switch {
-            display: flex; gap: 10px; margin-bottom: 20px;
-            background: rgba(0,0,0,0.3); padding: 5px; border-radius: 15px;
-        }
-        
-        .mode-btn {
-            flex: 1; padding: 12px 20px; border-radius: 12px;
-            cursor: pointer; font-size: 14px; font-weight: 600;
-            text-align: center; transition: 0.3s;
-            background: transparent; color: rgba(255,255,255,0.6);
-            border: 2px solid transparent;
-        }
-        
-        .mode-btn.active {
-            background: var(--accent);
-            color: #000;
-            box-shadow: 0 5px 15px rgba(255, 221, 89, 0.3);
-        }
-        
-        .mode-btn:hover:not(.active) {
-            border-color: var(--accent);
-            color: white;
-        }
-        
-        .upload-zone {
-            background: rgba(255,255,255,0.08);
-            border: 2px dashed rgba(255,255,255,0.2);
-            border-radius: 15px; padding: 30px;
-            text-align: center; cursor: pointer;
-            transition: 0.3s; margin-bottom: 20px;
-        }
-        
-        .upload-zone:hover {
-            border-color: var(--accent);
-            background: rgba(255,221,89,0.1);
-        }
-        
-        .upload-zone input { display: none; }
-        
-        .upload-icon {
-            font-size: 48px; margin-bottom: 10px;
-            opacity: 0.7;
-        }
-        
-        .hint {
-            font-size: 13px; color: rgba(255,255,255,0.5);
-            text-align: center; margin-top: 15px;
-        }
-        
-        .status {
-            background: rgba(76, 175, 80, 0.2);
-            border-left: 4px solid #4CAF50;
-            padding: 12px 20px; border-radius: 8px;
-            margin-top: 15px; font-size: 13px;
-            display: none;
-        }
-        
-        #authBtn {
-            width: 100%; padding: 14px; border-radius: 12px;
-            border: none; background: var(--accent);
-            color: #000; font-weight: bold; font-size: 15px;
-            cursor: pointer; margin-top: 20px;
-            box-shadow: 0 5px 15px rgba(255, 221, 89, 0.4);
-            transition: 0.3s;
-        }
-        
-        #authBtn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 20px rgba(255, 221, 89, 0.5);
-        }
-        
-        .loading {
-            position: fixed; top: 50%; left: 50%;
-            transform: translate(-50%, -50%);
-            background: rgba(0,0,0,0.9);
-            padding: 30px 50px; border-radius: 20px;
-            display: none; z-index: 1000;
-        }
-        
-        .spinner {
-            border: 3px solid rgba(255,255,255,0.1);
-            border-top: 3px solid var(--accent);
-            border-radius: 50%; width: 40px; height: 40px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 15px;
-        }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-    </style>
-</head>
-<body>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/body-pix"></script>
 
-    <div class="loading" id="loading">
-        <div class="spinner"></div>
-        <div>處理中...</div>
-    </div>
+<script>
+    // ... 保持你原本的變數宣告 ...
+    let bodyPixNet = null; // 新增模型變數
+    let foregroundCanvas = null; // 存儲分離出的人像
 
-    <div class="viewport" id="vbox">
-        <div class="photo-container" id="photoContainer">
-            <canvas id="canvasSingle"></canvas>
-            <canvas id="canvasL" style="display:none;"></canvas>
-            <canvas id="canvasR" style="display:none;"></canvas>
-        </div>
-    </div>
+    // 載入 AI 模型
+    async function initAIModel() {
+        bodyPixNet = await bodyPix.load();
+    }
+    initAIModel();
 
-    <div class="controls">
-        <div class="mode-switch">
-            <div class="mode-btn" id="btnAI">
-                🤖 AI 深度<br>
-                <span style="font-size:11px;opacity:0.7">單張照片</span>
-            </div>
-            <div class="mode-btn active" id="btnStereo">
-                👁️ 立體視差<br>
-                <span style="font-size:11px;opacity:0.7">左右眼照片</span>
-            </div>
-        </div>
+    // === 修改後的 AI 深度模式啟動邏輯 ===
+    async function loadAIMode() {
+        if (!originalImg) return;
         
-        <label class="upload-zone" id="uploadZone">
-            <div class="upload-icon">📸</div>
-            <div style="font-weight:600;margin-bottom:5px;">點擊上傳照片</div>
-            <div style="font-size:12px;opacity:0.6;">
-                立體模式：請上傳左右眼併排的照片<br>
-                AI 模式：任何單張照片
-            </div>
-            <input type="file" id="imgInput" accept="image/*">
-        </label>
-        
-        <div class="status" id="status">✓ 照片已載入</div>
-        
-        <button id="authBtn">開啟陀螺儀 3D 模式</button>
-        
-        <p class="hint">
-            💻 滑鼠在照片上輕柔滑動 | 📱 傾斜手機感受 3D
-        </p>
-    </div>
+        loading.style.display = 'block';
+        document.querySelector('#loading div:last-child').innerText = "AI 人像掃描中...";
 
-    <script>
-        const cvSingle = document.getElementById('canvasSingle');
-        const cvL = document.getElementById('canvasL');
-        const cvR = document.getElementById('canvasR');
-        const ctxSingle = cvSingle.getContext('2d');
-        const ctxL = cvL.getContext('2d');
-        const ctxR = cvR.getContext('2d');
-        const pc = document.getElementById('photoContainer');
-        const loading = document.getElementById('loading');
-        const status = document.getElementById('status');
+        // 1. 設定畫布
+        const w = originalImg.width;
+        const h = originalImg.height;
+        cvSingle.width = w;
+        cvSingle.height = h;
+        pc.style.aspectRatio = `${w}/${h}`;
+
+        // 2. 執行 AI 分離 (如果還沒分離過)
+        if (!bodyPixNet) await initAIModel();
+        const segmentation = await bodyPixNet.segmentPerson(originalImg);
         
-        let currentMode = 'Stereo'; // 'AI' 或 'Stereo'
-        let originalImg = null;
-        let depthMap = null; // AI 模式的深度圖
-        let targetX = 0.5, targetY = 0.5;
-        let currentX = 0.5, currentY = 0.5;
+        // 3. 創建離屏畫布存放「人像層」
+        foregroundCanvas = document.createElement('canvas');
+        foregroundCanvas.width = w;
+        foregroundCanvas.height = h;
+        const fCtx = foregroundCanvas.getContext('2d');
         
-        // === 模式切換 ===
-        document.getElementById('btnAI').onclick = function() {
-            if (!originalImg) return;
-            currentMode = 'AI';
-            this.classList.add('active');
-            document.getElementById('btnStereo').classList.remove('active');
-            switchToMode();
-        };
+        const mask = bodyPix.toMask(segmentation);
+        fCtx.putImageData(mask, 0, 0);
+        fCtx.globalCompositeOperation = 'source-in';
+        fCtx.drawImage(originalImg, 0, 0);
+
+        loading.style.display = 'none';
+        renderAI(0.5, 0.5);
+    }
+
+    // === 修改後的 AI 渲染邏輯 (人景分離視差) ===
+    function renderAI(percentX, percentY) {
+        if (!originalImg || !foregroundCanvas) return;
+
+        const moveX = (percentX - 0.5);
+        const moveY = (percentY - 0.5);
+
+        ctxSingle.clearRect(0, 0, cvSingle.width, cvSingle.height);
+
+        // A. 繪製背景層 (位移較大 + 模糊)
+        ctxSingle.save();
+        ctxSingle.filter = 'blur(5px) brightness(0.8)';
+        // 背景稍微放大一點，避免位移時邊緣露白
+        const bgShiftX = moveX * 60; 
+        const bgShiftY = moveY * 60;
+        ctxSingle.drawImage(originalImg, -30 + bgShiftX, -30 + bgShiftY, cvSingle.width + 60, cvSingle.height + 60);
+        ctxSingle.restore();
+
+        // B. 繪製人像層 (位移較小或反向位移，產生空間拉開感)
+        const fgShiftX = moveX * -15; 
+        const fgShiftY = moveY * -15;
+        ctxSingle.drawImage(foregroundCanvas, fgShiftX, fgShiftY);
+
+        // C. 保持你原本超棒的容器 3D 旋轉與陰影邏輯
+        const rotateY = moveX * 12;
+        const rotateX = -moveY * 12;
+        pc.style.transform = `rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale(1.05)`;
         
-        document.getElementById('btnStereo').onclick = function() {
-            if (!originalImg) return;
-            currentMode = 'Stereo';
-            this.classList.add('active');
-            document.getElementById('btnAI').classList.remove('active');
-            switchToMode();
-        };
-        
-        function switchToMode() {
-            if (currentMode === 'AI') {
-                cvSingle.style.display = 'block';
-                cvL.style.display = 'none';
-                cvR.style.display = 'none';
-                loadAIMode();
-            } else {
-                cvSingle.style.display = 'none';
-                cvL.style.display = 'block';
-                cvR.style.display = 'block';
-                loadStereoMode();
-            }
-        }
-        
-        // === 圖片上傳 ===
-        document.getElementById('imgInput').onchange = (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-            
-            loading.style.display = 'block';
-            const reader = new FileReader();
-            
-            reader.onload = (event) => {
-                const img = new Image();
-                img.onload = () => {
-                    originalImg = img;
-                    switchToMode();
-                    status.style.display = 'block';
-                    loading.style.display = 'none';
-                };
-                img.src = event.target.result;
-            };
-            
-            reader.readAsDataURL(file);
-        };
-        
-        // === AI 深度模式 ===
-        function loadAIMode() {
-            if (!originalImg) return;
-            
-            // 簡化版 AI 深度：用中心距離模擬深度
-            const w = originalImg.width;
-            const h = originalImg.height;
-            
-            cvSingle.width = w;
-            cvSingle.height = h;
-            pc.style.aspectRatio = `${w}/${h}`;
-            
-            // 創建簡單的徑向深度圖（中心近，邊緣遠）
-            depthMap = createRadialDepthMap(w, h);
-            
-            renderAI(0.5, 0.5);
-        }
-        
-        function createRadialDepthMap(w, h) {
-            const map = [];
-            const centerX = w / 2;
-            const centerY = h / 2;
-            const maxDist = Math.sqrt(centerX * centerX + centerY * centerY);
-            
-            for (let y = 0; y < h; y++) {
-                for (let x = 0; x < w; x++) {
-                    const dx = x - centerX;
-                    const dy = y - centerY;
-                    const dist = Math.sqrt(dx * dx + dy * dy);
-                    const depth = 1 - (dist / maxDist); // 0-1，中心為 1
-                    map.push(depth);
-                }
-            }
-            return map;
-        }
-        
-        function renderAI(percentX, percentY) {
-            if (!originalImg || !depthMap) return;
-            
-            const centerOffsetX = (percentX - 0.5);
-            const centerOffsetY = (percentY - 0.5);
-            
-            ctxSingle.clearRect(0, 0, cvSingle.width, cvSingle.height);
-            
-            // 🎯 分層渲染：根據深度分 3 層
-            const layers = [
-                { range: [0, 0.33], shift: 1.5, blur: 4 },    // 背景
-                { range: [0.33, 0.66], shift: 1.0, blur: 1 }, // 中景
-                { range: [0.66, 1.0], shift: 0.5, blur: 0 }   // 前景
-            ];
-            
-            layers.forEach(layer => {
-                const tempCanvas = document.createElement('canvas');
-                tempCanvas.width = cvSingle.width;
-                tempCanvas.height = cvSingle.height;
-                const tempCtx = tempCanvas.getContext('2d');
-                
-                // 繪製該層
-                tempCtx.drawImage(originalImg, 0, 0);
-                
-                // 應用遮罩（只保留該深度範圍）
-                const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
-                for (let i = 0; i < depthMap.length; i++) {
-                    const depth = depthMap[i];
-                    if (depth < layer.range[0] || depth > layer.range[1]) {
-                        imageData.data[i * 4 + 3] = 0; // 透明化
-                    }
-                }
-                tempCtx.putImageData(imageData, 0, 0);
-                
-                // 應用位移和模糊
-                ctxSingle.save();
-                ctxSingle.filter = `blur(${layer.blur}px)`;
-                const shiftX = centerOffsetX * 40 * layer.shift;
-                const shiftY = centerOffsetY * 40 * layer.shift;
-                ctxSingle.drawImage(tempCanvas, shiftX, shiftY);
-                ctxSingle.restore();
-            });
-            
-            // 容器 3D 旋轉
-            const rotateY = centerOffsetX * 10;
-            const rotateX = -centerOffsetY * 10;
-            pc.style.transform = `
-                rotateX(${rotateX}deg) 
-                rotateY(${rotateY}deg)
-                scale(1.03)
-            `;
-        }
-        
-        // === 立體視差模式（超細膩版）===
-        function loadStereoMode() {
-            if (!originalImg) return;
-            
-            const w = originalImg.width / 2;
-            const h = originalImg.height;
-            
-            cvL.width = cvR.width = w;
-            cvL.height = cvR.height = h;
-            pc.style.aspectRatio = `${w}/${h}`;
-            
-            // 繪製左右眼
-            ctxL.drawImage(originalImg, 0, 0, w, h, 0, 0, w, h);
-            ctxR.drawImage(originalImg, w, 0, w, h, 0, 0, w, h);
-            
-            renderStereo(0.5, 0.5);
-        }
-        
-        function renderStereo(percentX, percentY) {
-            if (!originalImg) return;
-            
-            const centerOffsetX = (percentX - 0.5);
-            const centerOffsetY = (percentY - 0.5);
-            
-            // 🎯 Ease-Out 曲線
-            const easeOut = (t) => 1 - Math.pow(1 - t, 3);
-            const smoothOffsetX = centerOffsetX >= 0 
-                ? easeOut(centerOffsetX * 2) * 0.5
-                : -easeOut(-centerOffsetX * 2) * 0.5;
-            
-            // 🎯 視差位移
-            const maxShift = 25;
-            const shiftL = smoothOffsetX * maxShift * 0.7;
-            const shiftR = smoothOffsetX * maxShift * 1.3;
-            
-            // 🎯 動態縮放
-            const scaleBase = 1.08;
-            const scaleDelta = Math.abs(smoothOffsetX) * 0.04;
-            const scaleL = scaleBase + scaleDelta * 0.3;
-            const scaleR = scaleBase + scaleDelta * 0.7;
-            
-            cvL.style.transform = `scale(${scaleL}) translateX(${shiftL}px)`;
-            cvR.style.transform = `scale(${scaleR}) translateX(${shiftR}px)`;
-            
-            // 🎯 S 曲線透明度
-            const smoothstep = (x) => x * x * (3 - 2 * x);
-            const blendFactor = smoothstep(percentX);
-            
-            cvR.style.opacity = 0.3 + blendFactor * 0.7;
-            cvL.style.opacity = 0.3 + (1 - blendFactor) * 0.7;
-            
-            // 🎯 景深模糊
-            const blurAmount = Math.abs(centerOffsetX) * 0.5;
-            cvL.style.filter = `blur(${blurAmount}px)`;
-            cvR.style.filter = `blur(${blurAmount * 0.5}px)`;
-            
-            // 🎯 容器 3D 旋轉
-            const rotateY = centerOffsetX * 8;
-            const rotateX = -centerOffsetY * 8;
-            
-            pc.style.transform = `
-                rotateX(${rotateX}deg) 
-                rotateY(${rotateY}deg)
-                scale(1.02)
-            `;
-            
-            // 🎯 動態陰影
-            const shadowX = rotateY * 2.5;
-            const shadowY = -rotateX * 2.5;
-            const shadowBlur = 20 + (Math.abs(rotateY) + Math.abs(rotateX)) * 1.5;
-            
-            pc.style.boxShadow = `
-                ${shadowX}px ${shadowY}px ${shadowBlur}px rgba(0,0,0,0.6),
-                0 40px 80px rgba(0,0,0,0.9)
-            `;
-        }
-        
-        // === 慣性動畫 ===
-        function animate() {
-            const ease = 0.12;
-            currentX += (targetX - currentX) * ease;
-            currentY += (targetY - currentY) * ease;
-            
-            if (Math.abs(targetX - currentX) > 0.001 || Math.abs(targetY - currentY) > 0.001) {
-                if (currentMode === 'AI') {
-                    renderAI(currentX, currentY);
-                } else {
-                    renderStereo(currentX, currentY);
-                }
-                requestAnimationFrame(animate);
-            }
-        }
-        
-        // === 互動 ===
-        document.getElementById('vbox').onmousemove = (e) => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            targetX = (e.clientX - rect.left) / rect.width;
-            targetY = (e.clientY - rect.top) / rect.height;
-            requestAnimationFrame(animate);
-        };
-        
-        document.getElementById('vbox').onmouseleave = () => {
-            targetX = targetY = 0.5;
-            requestAnimationFrame(animate);
-        };
-        
-        // === 陀螺儀 ===
-        document.getElementById('authBtn').onclick = () => {
-            if (typeof DeviceOrientationEvent !== 'undefined' && 
-                typeof DeviceOrientationEvent.requestPermission === 'function') {
-                DeviceOrientationEvent.requestPermission().then(s => {
-                    if(s === 'granted') {
-                        window.addEventListener('deviceorientation', handleMove);
-                        document.getElementById('authBtn').textContent = '✓ 陀螺儀已啟動';
-                        document.getElementById('authBtn').style.background = '#4ade80';
-                    }
-                });
-            } else {
-                window.addEventListener('deviceorientation', handleMove);
-                document.getElementById('authBtn').style.display = 'none';
-            }
-        };
-        
-        function handleMove(e) {
-            if(!e.gamma || !e.beta) return;
-            targetX = Math.max(0, Math.min(1, (e.gamma + 25) / 50));
-            targetY = Math.max(0, Math.min(1, (e.beta + 25) / 50));
-            requestAnimationFrame(animate);
-        }
-        
-        // === 預載範例（可選）===
-        window.onload = () => {
-            // 如果有預設圖片，可以自動載入
-            // loadDefaultImage();
-        };
-    </script>
-</body>
-</html>
+        // 這裡可以沿用你原本的動態陰影計算...
+        const shadowX = rotateY * 2.5;
+        const shadowY = -rotateX * 2.5;
+        pc.style.boxShadow = `${shadowX}px ${shadowY}px 50px rgba(0,0,0,0.5), 0 40px 80px rgba(0,0,0,0.8)`;
+    }
+</script>
