@@ -3,50 +3,52 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>極致 3D 照片劇院</title>
+    <title>3D 深度感觀賞器 Pro</title>
     <style>
-        :root { --accent: #00d1b2; }
+        :root { --accent: #32ff7e; --bg: #0a0a0a; }
         body {
-            margin: 0; background: #0f0f0f; color: white;
-            font-family: -apple-system, sans-serif;
+            margin: 0; background: var(--bg); color: white;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             display: flex; flex-direction: column; align-items: center; min-height: 100vh;
         }
-        /* 主顯示區 */
+        /* 主視窗：增加景深感 */
         .viewport {
-            position: relative; width: 95vw; max-width: 800px;
-            margin-top: 20px; border-radius: 12px; overflow: hidden;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.8); background: #000;
+            position: relative; width: 92vw; max-width: 700px;
+            margin-top: 30px; border-radius: 20px; overflow: hidden;
+            box-shadow: 0 30px 60px rgba(0,0,0,0.8);
+            background: #000; perspective: 1000px;
         }
-        canvas { position: absolute; top:0; left:0; width:100%; height:100%; object-fit: cover; }
+        canvas { 
+            position: absolute; top:0; left:0; width:100%; height:100%; 
+            object-fit: cover; will-change: transform, opacity;
+            transition: transform 0.15s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
         #canvasR { opacity: 0.5; }
 
-        /* 控制面板 */
-        .panel { width: 90%; max-width: 800px; padding: 20px; text-align: center; }
-        .mode-selector { margin-bottom: 15px; display: flex; justify-content: center; gap: 10px; }
-        button {
-            padding: 8px 16px; border: 1px solid #444; background: #222; color: #ccc;
-            border-radius: 20px; cursor: pointer; transition: 0.3s;
+        /* UI 面板 */
+        .panel { width: 90%; max-width: 700px; padding: 25px; text-align: center; }
+        .thumb-nav {
+            display: flex; gap: 12px; overflow-x: auto; padding: 15px 0;
+            scrollbar-width: none; justify-content: flex-start;
         }
-        button.active { background: var(--accent); color: black; border-color: var(--accent); }
-        
-        /* 縮圖預覽區 */
-        .thumb-container {
-            display: flex; gap: 10px; overflow-x: auto; padding: 10px;
-            width: 100%; justify-content: center;
+        .thumb-item {
+            flex: 0 0 70px; height: 70px; border-radius: 12px;
+            border: 2px solid #333; overflow: hidden; cursor: pointer; transition: 0.3s;
         }
-        .thumb {
-            width: 60px; height: 60px; border: 2px solid #444; border-radius: 8px;
-            object-fit: cover; cursor: pointer; opacity: 0.6;
-        }
-        .thumb.active { border-color: var(--accent); opacity: 1; }
+        .thumb-item.active { border-color: var(--accent); transform: scale(1.1); box-shadow: 0 0 15px var(--accent); }
+        .thumb-item img { width: 100%; height: 100%; object-fit: cover; }
 
+        .btn-group { margin: 20px 0; display: flex; gap: 10px; justify-content: center; }
+        button {
+            padding: 10px 20px; border: none; border-radius: 30px;
+            background: #222; color: #fff; cursor: pointer; font-weight: 500;
+        }
+        button.primary { background: var(--accent); color: #000; }
+        .hint { font-size: 13px; color: #666; margin-top: 15px; }
         .hidden { display: none; }
-        .hint { font-size: 12px; color: #888; margin-top: 10px; }
     </style>
 </head>
 <body>
-
-    <h2 style="margin-bottom:5px;">3D 照片劇院</h2>
 
     <div class="viewport" id="vbox">
         <canvas id="canvasL"></canvas>
@@ -54,64 +56,58 @@
     </div>
 
     <div class="panel">
-        <div class="mode-selector">
-            <button id="btnMotion" class="active">感應/滑鼠互動</button>
-            <button id="btnAnaglyph">紅藍眼鏡模式</button>
+        <div class="thumb-nav" id="thumbNav">
+            </div>
+
+        <div class="btn-group">
+            <button id="authBtn" class="primary">啟動互動感應</button>
+            <input type="file" id="fileInput" class="hidden" accept="image/*" multiple>
+            <button onclick="document.getElementById('fileInput').click()">更換照片</button>
         </div>
 
-        <button id="authBtn" style="background:#00d1b2; color:black; font-weight:bold;">啟動手機感應器</button>
-        <input type="file" id="fileInput" class="hidden" accept="image/*" multiple>
-        <button onclick="document.getElementById('fileInput').click()">上傳照片 (最多6張)</button>
-
-        <div class="thumb-container" id="thumbs"></div>
-        <p class="hint">手機搖晃、電腦滑鼠移動或戴上紅藍眼鏡皆可體驗</p>
+        <p class="hint">📱 手機左右傾斜 | 💻 滑鼠左右移動</p>
     </div>
 
     <script>
         const cvL = document.getElementById('canvasL');
         const cvR = document.getElementById('canvasR');
-        const ctxL = cvL.getContext('2d', {willReadFrequently: true});
-        const ctxR = cvR.getContext('2d', {willReadFrequently: true});
-        const thumbsBox = document.getElementById('thumbs');
+        const ctxL = cvL.getContext('2d');
+        const ctxR = cvR.getContext('2d');
+        const thumbNav = document.getElementById('thumbNav');
         const authBtn = document.getElementById('authBtn');
         
         let images = [];
         let currentIndex = 0;
-        let viewMode = 'motion'; // 'motion' or 'anaglyph'
+        const defaultFileNames = ['photo1.jpg', 'photo2.jpg', 'photo3.jpg', 'photo4.jpg', 'photo5.jpg', 'photo6.jpg'];
 
-        // 1. 處理檔案上傳
-        document.getElementById('fileInput').onchange = (e) => {
-            const files = Array.from(e.target.files).slice(0, 6);
-            images = [];
-            thumbsBox.innerHTML = '';
-            
-            files.forEach((file, index) => {
-                const url = URL.createObjectURL(file);
+        // 初始化：載入 6 張預設圖
+        window.onload = () => {
+            defaultFileNames.forEach((name, i) => {
                 const img = new Image();
-                img.src = url;
+                img.src = name;
                 img.onload = () => {
-                    images[index] = img;
-                    createThumb(url, index);
-                    if (index === 0) loadToCanvas(0);
+                    images[i] = img;
+                    addThumb(img.src, i);
+                    if (i === 0) loadToCanvas(0);
                 };
             });
         };
 
-        function createThumb(url, index) {
-            const imgEl = document.createElement('img');
-            imgEl.src = url;
-            imgEl.className = 'thumb';
-            imgEl.onclick = () => loadToCanvas(index);
-            thumbsBox.appendChild(imgEl);
+        function addThumb(src, index) {
+            const div = document.createElement('div');
+            div.className = 'thumb-item' + (index === 0 ? ' active' : '');
+            div.innerHTML = `<img src="${src}">`;
+            div.onclick = () => loadToCanvas(index);
+            thumbNav.appendChild(div);
         }
 
-        // 2. 載入至畫布並裁切 SBS
         function loadToCanvas(index) {
             currentIndex = index;
             const img = images[index];
+            if(!img) return;
+
             const w = img.width / 2;
             const h = img.height;
-            
             cvL.width = cvR.width = w;
             cvL.height = cvR.height = h;
             document.getElementById('vbox').style.aspectRatio = `${w}/${h}`;
@@ -119,85 +115,71 @@
             ctxL.drawImage(img, 0, 0, w, h, 0, 0, w, h);
             ctxR.drawImage(img, w, 0, w, h, 0, 0, w, h);
 
-            // 更新縮圖狀態
-            document.querySelectorAll('.thumb').forEach((t, i) => {
+            document.querySelectorAll('.thumb-item').forEach((t, i) => {
                 t.classList.toggle('active', i === index);
             });
+            updateView(0.5); // 重設位置
+        }
+
+        // 核心渲染優化演算法
+        function updateView(input) {
+            // 1. 平滑曲線：讓中間轉換更快，減少兩圖重疊的模糊時間
+            const smoothInput = Math.pow(input, 3) * (input * (input * 6 - 15) + 10);
             
-            render();
+            // 2. 透明度控制
+            cvR.style.opacity = smoothInput;
+
+            // 3. 反向位移 (Parallax)：這是不產生殘影的關鍵
+            // 左眼圖往右移時，右眼圖往左移，模擬真實視差
+            const drift = 35; // 位移強度
+            const moveL = (smoothInput - 0.5) * -drift;
+            const moveR = (smoothInput - 0.5) * drift;
+
+            // 增加稍微放大(1.15)以遮蓋邊緣位移產生的白邊
+            cvL.style.transform = `scale(1.15) translateX(${moveL}px)`;
+            cvR.style.transform = `scale(1.15) translateX(${moveR}px)`;
         }
 
-        // 3. 渲染邏輯
-        function render(inputVal = 0.5) {
-            if (viewMode === 'motion') {
-                cvR.style.opacity = inputVal;
-                const moveX = (inputVal - 0.5) * 30;
-                const trans = `scale(1.1) translateX(${moveX}px)`;
-                cvL.style.transform = cvR.style.transform = trans;
-                cvR.style.mixBlendMode = 'normal';
-            } else {
-                // 紅藍模式邏輯
-                applyAnaglyph();
-            }
-        }
-
-        function applyAnaglyph() {
-            const w = cvL.width; const h = cvL.height;
-            const imgL = ctxL.getImageData(0,0,w,h);
-            const imgR = ctxR.getImageData(0,0,w,h);
-            const out = ctxL.createImageData(w,h);
-            
-            for(let i=0; i<imgL.data.length; i+=4) {
-                out.data[i] = imgL.data[i];       // 紅色來自左眼
-                out.data[i+1] = imgR.data[i+1];   // 綠色來自右眼
-                out.data[i+2] = imgR.data[i+2];   // 藍色來自右眼
-                out.data[i+3] = 255;
-            }
-            // 這裡我們暫時用一個隱藏畫布顯示，或者直接覆蓋
-            ctxR.putImageData(out, 0, 0);
-            cvR.style.opacity = 1;
-            cvR.style.transform = 'scale(1)';
-            cvL.style.transform = 'scale(1)';
-        }
-
-        // 4. 互動事件
+        // 互動事件
         document.getElementById('vbox').onmousemove = (e) => {
-            if (viewMode !== 'motion') return;
             const rect = e.currentTarget.getBoundingClientRect();
-            render((e.clientX - rect.left) / rect.width);
+            updateView((e.clientX - rect.left) / rect.width);
         };
 
         authBtn.onclick = () => {
-            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
                 DeviceOrientationEvent.requestPermission().then(state => {
                     if (state === 'granted') window.addEventListener('deviceorientation', handleMotion);
                 });
             } else {
                 window.addEventListener('deviceorientation', handleMotion);
             }
-            authBtn.classList.add('hidden');
+            authBtn.style.display = 'none';
         };
 
         function handleMotion(e) {
-            if (viewMode !== 'motion' || !e.gamma) return;
-            let p = (e.gamma + 15) / 30;
-            render(Math.max(0, Math.min(1, p)));
+            if (!e.gamma) return;
+            // 限制感應範圍在 -20 到 20 度之間，讓動作更細膩
+            let p = (e.gamma + 20) / 40;
+            p = Math.max(0, Math.min(1, p));
+            updateView(p);
         }
 
-        // 切換模式按鈕
-        document.getElementById('btnMotion').onclick = function() {
-            viewMode = 'motion';
-            this.classList.add('active');
-            document.getElementById('btnAnaglyph').classList.remove('active');
-            loadToCanvas(currentIndex);
+        // 支援手動上傳新照片
+        document.getElementById('fileInput').onchange = (e) => {
+            thumbNav.innerHTML = '';
+            images = [];
+            Array.from(e.target.files).slice(0, 6).forEach((file, i) => {
+                const url = URL.createObjectURL(file);
+                const img = new Image();
+                img.src = url;
+                img.onload = () => {
+                    images[i] = img;
+                    addThumb(url, i);
+                    if (i === 0) loadToCanvas(0);
+                };
+            });
         };
-        document.getElementById('btnAnaglyph').onclick = function() {
-            viewMode = 'anaglyph';
-            this.classList.add('active');
-            document.getElementById('btnMotion').classList.remove('active');
-            render();
-        };
-
     </script>
 </body>
 </html>
