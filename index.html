@@ -1,188 +1,81 @@
-<!DOCTYPE html>
-<html lang="zh-Hant">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>全能 3D 深度感觀賞器 (AI + Stereo)</title>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/body-pix"></script>
-    <style>
-        :root { --accent: #1877f2; --bg: #050505; }
-        body {
-            margin: 0; background: var(--bg); color: white;
-            font-family: sans-serif; display: flex; flex-direction: column; align-items: center;
-            min-height: 100vh; overflow: hidden; justify-content: center;
-        }
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/body-pix"></script>
+
+<script>
+    // ... 保持你原本的變數宣告 ...
+    let bodyPixNet = null; // 新增模型變數
+    let foregroundCanvas = null; // 存儲分離出的人像
+
+    // 載入 AI 模型
+    async function initAIModel() {
+        bodyPixNet = await bodyPix.load();
+    }
+    initAIModel();
+
+    // === 修改後的 AI 深度模式啟動邏輯 ===
+    async function loadAIMode() {
+        if (!originalImg) return;
         
-        .viewport {
-            position: relative; width: 90vw; max-width: 600px; perspective: 1500px;
-        }
+        loading.style.display = 'block';
+        document.querySelector('#loading div:last-child').innerText = "AI 人像掃描中...";
+
+        // 1. 設定畫布
+        const w = originalImg.width;
+        const h = originalImg.height;
+        cvSingle.width = w;
+        cvSingle.height = h;
+        pc.style.aspectRatio = `${w}/${h}`;
+
+        // 2. 執行 AI 分離 (如果還沒分離過)
+        if (!bodyPixNet) await initAIModel();
+        const segmentation = await bodyPixNet.segmentPerson(originalImg);
         
-        .photo-container {
-            position: relative; width: 100%; border-radius: 20px;
-            overflow: hidden; background: #000;
-            box-shadow: 0 50px 100px rgba(0,0,0,0.8);
-            transform-style: preserve-3d; transition: transform 0.1s;
-        }
+        // 3. 創建離屏畫布存放「人像層」
+        foregroundCanvas = document.createElement('canvas');
+        foregroundCanvas.width = w;
+        foregroundCanvas.height = h;
+        const fCtx = foregroundCanvas.getContext('2d');
         
-        canvas { width: 100%; display: block; will-change: transform; }
+        const mask = bodyPix.toMask(segmentation);
+        fCtx.putImageData(mask, 0, 0);
+        fCtx.globalCompositeOperation = 'source-in';
+        fCtx.drawImage(originalImg, 0, 0);
+
+        loading.style.display = 'none';
+        renderAI(0.5, 0.5);
+    }
+
+    // === 修改後的 AI 渲染邏輯 (人景分離視差) ===
+    function renderAI(percentX, percentY) {
+        if (!originalImg || !foregroundCanvas) return;
+
+        const moveX = (percentX - 0.5);
+        const moveY = (percentY - 0.5);
+
+        ctxSingle.clearRect(0, 0, cvSingle.width, cvSingle.height);
+
+        // A. 繪製背景層 (位移較大 + 模糊)
+        ctxSingle.save();
+        ctxSingle.filter = 'blur(5px) brightness(0.8)';
+        // 背景稍微放大一點，避免位移時邊緣露白
+        const bgShiftX = moveX * 60; 
+        const bgShiftY = moveY * 60;
+        ctxSingle.drawImage(originalImg, -30 + bgShiftX, -30 + bgShiftY, cvSingle.width + 60, cvSingle.height + 60);
+        ctxSingle.restore();
+
+        // B. 繪製人像層 (位移較小或反向位移，產生空間拉開感)
+        const fgShiftX = moveX * -15; 
+        const fgShiftY = moveY * -15;
+        ctxSingle.drawImage(foregroundCanvas, fgShiftX, fgShiftY);
+
+        // C. 保持你原本超棒的容器 3D 旋轉與陰影邏輯
+        const rotateY = moveX * 12;
+        const rotateX = -moveY * 12;
+        pc.style.transform = `rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale(1.05)`;
         
-        /* UI 控制區 */
-        .controls {
-            margin-top: 30px; text-align: center; z-index: 10;
-            background: rgba(255,255,255,0.05); padding: 20px; border-radius: 20px;
-        }
-
-        .mode-switch {
-            display: flex; background: #222; border-radius: 10px; padding: 5px; margin-bottom: 15px;
-        }
-        .mode-btn {
-            flex: 1; padding: 8px; border-radius: 8px; cursor: pointer; font-size: 14px;
-        }
-        .mode-btn.active { background: var(--accent); color: white; }
-
-        .upload-btn {
-            background: white; color: black; padding: 10px 20px;
-            border-radius: 25px; cursor: pointer; font-weight: bold;
-        }
-
-        .loading-overlay {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.9); display: none; flex-direction: column;
-            align-items: center; justify-content: center; z-index: 100;
-        }
-    </style>
-</head>
-<body>
-
-    <div id="loading" class="loading-overlay">
-        <div style="font-size: 20px;">AI 分析中...</div>
-    </div>
-
-    <div class="viewport" id="vbox">
-        <div class="photo-container" id="pc">
-            <canvas id="mainCanvas"></canvas>
-        </div>
-    </div>
-
-    <div class="controls">
-        <div class="mode-switch">
-            <div class="mode-btn active" id="btnAI">AI 自動深度 (單圖)</div>
-            <div class="mode-btn" id="btnStereo">左右眼模式 (雙圖)</div>
-        </div>
-        
-        <label class="upload-btn">
-            上傳照片
-            <input type="file" id="imgInput" accept="image/*">
-        </label>
-        
-        <p style="font-size: 12px; color: #666; margin-top: 15px;">移動滑鼠或傾斜手機感受 3D</p>
-    </div>
-
-    <script>
-        const canvas = document.getElementById('mainCanvas');
-        const ctx = canvas.getContext('2d');
-        const pc = document.getElementById('pc');
-        let currentMode = 'AI'; // 'AI' 或 'Stereo'
-        let net, originalImg, foregroundMask;
-        let isReady = false;
-
-        // 1. 初始化 AI
-        async function loadModel() {
-            net = await bodyPix.load();
-        }
-        loadModel();
-
-        // 2. 切換模式邏輯
-        document.getElementById('btnAI').onclick = function() {
-            currentMode = 'AI';
-            this.classList.add('active');
-            document.getElementById('btnStereo').classList.remove('active');
-            if(originalImg) processImage();
-        };
-        document.getElementById('btnStereo').onclick = function() {
-            currentMode = 'Stereo';
-            this.classList.add('active');
-            document.getElementById('btnAI').classList.remove('active');
-            if(originalImg) processImage();
-        };
-
-        // 3. 處理上傳
-        document.getElementById('imgInput').onchange = (e) => {
-            const file = e.target.files[0];
-            const reader = new FileReader();
-            reader.onload = (event) => {
-                const img = new Image();
-                img.onload = () => {
-                    originalImg = img;
-                    processImage();
-                };
-                img.src = event.target.result;
-            };
-            reader.readAsDataURL(file);
-        };
-
-        async function processImage() {
-            if (!originalImg) return;
-            isReady = false;
-            document.getElementById('loading').style.display = 'flex';
-
-            if (currentMode === 'AI') {
-                const segmentation = await net.segmentPerson(originalImg);
-                foregroundMask = bodyPix.toMask(segmentation);
-                canvas.width = originalImg.width;
-                canvas.height = originalImg.height;
-            } else {
-                canvas.width = originalImg.width / 2;
-                canvas.height = originalImg.height;
-            }
-
-            document.getElementById('loading').style.display = 'none';
-            isReady = true;
-            render(0.5, 0.5);
-        }
-
-        // 4. 核心渲染 (整合兩種演算法)
-        function render(px, py) {
-            if (!isReady) return;
-
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            const moveX = (px - 0.5);
-            const moveY = (py - 0.5);
-
-            if (currentMode === 'AI') {
-                // --- AI 模式：背景模糊位移 + 前景固定 ---
-                ctx.save();
-                ctx.filter = 'blur(4px)';
-                ctx.drawImage(originalImg, -20 + moveX*40, -20 + moveY*40, canvas.width+40, canvas.height+40);
-                ctx.restore();
-
-                const tempCanvas = document.createElement('canvas');
-                tempCanvas.width = canvas.width; tempCanvas.height = canvas.height;
-                const tCtx = tempCanvas.getContext('2d');
-                tCtx.putImageData(foregroundMask, 0, 0);
-                tCtx.globalCompositeOperation = 'source-in';
-                tCtx.drawImage(originalImg, 0, 0);
-                ctx.drawImage(tempCanvas, moveX*-10, 0);
-
-            } else {
-                // --- Stereo 模式：左右眼差速 (之前的範例) ---
-                const drift = 30;
-                // 畫左眼底圖
-                ctx.drawImage(originalImg, 0, 0, canvas.width, canvas.height, moveX*-drift, 0, canvas.width, canvas.height);
-                // 畫右眼 (加上遮罩與位移)
-                ctx.save();
-                ctx.globalAlpha = 0.5; // 簡單混合
-                ctx.drawImage(originalImg, canvas.width, 0, canvas.width, canvas.height, moveX*drift, 0, canvas.width, canvas.height);
-                ctx.restore();
-            }
-
-            // 共同的 3D 卡片旋轉
-            pc.style.transform = `rotateX(${-moveY*20}deg) rotateY(${moveX*20}deg) scale(1.05)`;
-        }
-
-        // 互動
-        window.onmousemove = (e) => render(e.clientX / window.innerWidth, e.clientY / window.innerHeight);
-    </script>
-</body>
-</html>
+        // 這裡可以沿用你原本的動態陰影計算...
+        const shadowX = rotateY * 2.5;
+        const shadowY = -rotateX * 2.5;
+        pc.style.boxShadow = `${shadowX}px ${shadowY}px 50px rgba(0,0,0,0.5), 0 40px 80px rgba(0,0,0,0.8)`;
+    }
+</script>
