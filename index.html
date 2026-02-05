@@ -3,60 +3,55 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>全能 3D 深度感觀賞器 (AI + Stereo)</title>
+    <title>AI 智能 3D 深度觀賞器</title>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/body-pix"></script>
     <style>
-        :root { --accent: #1877f2; --bg: #050505; }
+        :root { --accent: #00d2ff; --bg: #0a0a0a; }
         body {
             margin: 0; background: var(--bg); color: white;
-            font-family: sans-serif; display: flex; flex-direction: column; align-items: center;
-            min-height: 100vh; overflow: hidden; justify-content: center;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            min-height: 100vh; overflow: hidden;
         }
         
         .viewport {
-            position: relative; width: 90vw; max-width: 600px; perspective: 1500px;
+            position: relative; width: 90vw; max-width: 500px;
+            perspective: 1200px;
         }
         
         .photo-container {
-            position: relative; width: 100%; border-radius: 20px;
-            overflow: hidden; background: #000;
-            box-shadow: 0 50px 100px rgba(0,0,0,0.8);
-            transform-style: preserve-3d; transition: transform 0.1s;
+            position: relative; width: 100%; border-radius: 24px;
+            overflow: hidden; background: #111;
+            box-shadow: 0 40px 100px rgba(0,0,0,0.7);
+            transform-style: preserve-3d;
+            transition: transform 0.15s ease-out;
         }
+
+        canvas { width: 100%; display: block; border-radius: 24px; }
+
+        .ui-layer { margin-top: 30px; text-align: center; }
         
-        canvas { width: 100%; display: block; will-change: transform; }
-        
-        /* UI 控制區 */
-        .controls {
-            margin-top: 30px; text-align: center; z-index: 10;
-            background: rgba(255,255,255,0.05); padding: 20px; border-radius: 20px;
-        }
-
-        .mode-switch {
-            display: flex; background: #222; border-radius: 10px; padding: 5px; margin-bottom: 15px;
-        }
-        .mode-btn {
-            flex: 1; padding: 8px; border-radius: 8px; cursor: pointer; font-size: 14px;
-        }
-        .mode-btn.active { background: var(--accent); color: white; }
-
-        .upload-btn {
-            background: white; color: black; padding: 10px 20px;
-            border-radius: 25px; cursor: pointer; font-weight: bold;
-        }
-
         .loading-overlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.9); display: none; flex-direction: column;
+            background: rgba(0,0,0,0.8); display: flex; flex-direction: column;
             align-items: center; justify-content: center; z-index: 100;
+            display: none;
         }
+
+        .btn-group { display: flex; gap: 10px; justify-content: center; }
+        .upload-btn {
+            background: var(--accent); color: black; padding: 12px 28px;
+            border-radius: 50px; cursor: pointer; font-weight: bold;
+        }
+        input[type="file"] { display: none; }
     </style>
 </head>
 <body>
 
     <div id="loading" class="loading-overlay">
-        <div style="font-size: 20px;">AI 分析中...</div>
+        <div style="font-size: 24px; margin-bottom: 10px;">AI 正在掃描人像...</div>
+        <div id="status">模型讀取中...</div>
     </div>
 
     <div class="viewport" id="vbox">
@@ -65,124 +60,105 @@
         </div>
     </div>
 
-    <div class="controls">
-        <div class="mode-switch">
-            <div class="mode-btn active" id="btnAI">AI 自動深度 (單圖)</div>
-            <div class="mode-btn" id="btnStereo">左右眼模式 (雙圖)</div>
+    <div class="ui-layer">
+        <div class="btn-group">
+            <label class="upload-btn">
+                上傳人像照
+                <input type="file" id="imgInput" accept="image/*">
+            </label>
         </div>
-        
-        <label class="upload-btn">
-            上傳照片
-            <input type="file" id="imgInput" accept="image/*">
-        </label>
-        
-        <p style="font-size: 12px; color: #666; margin-top: 15px;">移動滑鼠或傾斜手機感受 3D</p>
+        <p style="color: #666; font-size: 13px; margin-top: 15px;">模型會自動偵測主體並分離背景</p>
     </div>
 
     <script>
         const canvas = document.getElementById('mainCanvas');
         const ctx = canvas.getContext('2d');
-        const pc = document.getElementById('pc');
-        let currentMode = 'AI'; // 'AI' 或 'Stereo'
+        const loading = document.getElementById('loading');
         let net, originalImg, foregroundMask;
         let isReady = false;
 
-        // 1. 初始化 AI
-        async function loadModel() {
-            net = await bodyPix.load();
+        // 1. 初始化 AI 模型
+        async function initAI() {
+            document.getElementById('status').innerText = "載入 BodyPix 模型...";
+            loading.style.display = 'flex';
+            net = await bodyPix.load({
+                architecture: 'MobileNetV1',
+                outputStride: 16,
+                multiplier: 0.75,
+                quantBytes: 2
+            });
+            loading.style.display = 'none';
         }
-        loadModel();
+        initAI();
 
-        // 2. 切換模式邏輯
-        document.getElementById('btnAI').onclick = function() {
-            currentMode = 'AI';
-            this.classList.add('active');
-            document.getElementById('btnStereo').classList.remove('active');
-            if(originalImg) processImage();
-        };
-        document.getElementById('btnStereo').onclick = function() {
-            currentMode = 'Stereo';
-            this.classList.add('active');
-            document.getElementById('btnAI').classList.remove('active');
-            if(originalImg) processImage();
-        };
-
-        // 3. 處理上傳
-        document.getElementById('imgInput').onchange = (e) => {
+        // 2. 處理圖片並進行 AI 分離
+        document.getElementById('imgInput').onchange = async (e) => {
             const file = e.target.files[0];
+            if (!file) return;
+
+            loading.style.display = 'flex';
+            document.getElementById('status').innerText = "分析影像深度...";
+
             const reader = new FileReader();
             reader.onload = (event) => {
                 const img = new Image();
-                img.onload = () => {
+                img.onload = async () => {
                     originalImg = img;
-                    processImage();
+                    // 執行 AI 分離
+                    const segmentation = await net.segmentPerson(img);
+                    foregroundMask = bodyPix.toMask(segmentation);
+                    
+                    // 設定畫布尺寸
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    isReady = true;
+                    loading.style.display = 'none';
+                    render(0.5, 0.5);
                 };
                 img.src = event.target.result;
             };
             reader.readAsDataURL(file);
         };
 
-        async function processImage() {
-            if (!originalImg) return;
-            isReady = false;
-            document.getElementById('loading').style.display = 'flex';
-
-            if (currentMode === 'AI') {
-                const segmentation = await net.segmentPerson(originalImg);
-                foregroundMask = bodyPix.toMask(segmentation);
-                canvas.width = originalImg.width;
-                canvas.height = originalImg.height;
-            } else {
-                canvas.width = originalImg.width / 2;
-                canvas.height = originalImg.height;
-            }
-
-            document.getElementById('loading').style.display = 'none';
-            isReady = true;
-            render(0.5, 0.5);
-        }
-
-        // 4. 核心渲染 (整合兩種演算法)
+        // 3. 渲染邏輯：前景與背景分離位移
         function render(px, py) {
             if (!isReady) return;
 
+            const offX = (px - 0.5) * 50; // 背景位移幅度
+            const offY = (py - 0.5) * 50;
+            const fgX = (px - 0.5) * -15; // 前景反向微動
+
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            const moveX = (px - 0.5);
-            const moveY = (py - 0.5);
 
-            if (currentMode === 'AI') {
-                // --- AI 模式：背景模糊位移 + 前景固定 ---
-                ctx.save();
-                ctx.filter = 'blur(4px)';
-                ctx.drawImage(originalImg, -20 + moveX*40, -20 + moveY*40, canvas.width+40, canvas.height+40);
-                ctx.restore();
+            // 繪製背景層 (稍微放大並偏移)
+            ctx.save();
+            ctx.filter = 'blur(4px) brightness(0.7)'; // 背景稍微模糊增加深度
+            ctx.drawImage(originalImg, -25 + offX, -25 + offY, canvas.width + 50, canvas.height + 50);
+            ctx.restore();
 
-                const tempCanvas = document.createElement('canvas');
-                tempCanvas.width = canvas.width; tempCanvas.height = canvas.height;
-                const tCtx = tempCanvas.getContext('2d');
-                tCtx.putImageData(foregroundMask, 0, 0);
-                tCtx.globalCompositeOperation = 'source-in';
-                tCtx.drawImage(originalImg, 0, 0);
-                ctx.drawImage(tempCanvas, moveX*-10, 0);
+            // 繪製前景層 (使用 AI 生成的遮罩)
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = canvas.width;
+            tempCanvas.height = canvas.height;
+            const tCtx = tempCanvas.getContext('2d');
+            
+            // 利用遮罩只畫出人像
+            tCtx.putImageData(foregroundMask, 0, 0);
+            tCtx.globalCompositeOperation = 'source-in';
+            tCtx.drawImage(originalImg, 0, 0);
 
-            } else {
-                // --- Stereo 模式：左右眼差速 (之前的範例) ---
-                const drift = 30;
-                // 畫左眼底圖
-                ctx.drawImage(originalImg, 0, 0, canvas.width, canvas.height, moveX*-drift, 0, canvas.width, canvas.height);
-                // 畫右眼 (加上遮罩與位移)
-                ctx.save();
-                ctx.globalAlpha = 0.5; // 簡單混合
-                ctx.drawImage(originalImg, canvas.width, 0, canvas.width, canvas.height, moveX*drift, 0, canvas.width, canvas.height);
-                ctx.restore();
-            }
+            ctx.drawImage(tempCanvas, fgX, 0, canvas.width, canvas.height);
 
-            // 共同的 3D 卡片旋轉
-            pc.style.transform = `rotateX(${-moveY*20}deg) rotateY(${moveX*20}deg) scale(1.05)`;
+            // CSS 3D 容器旋轉
+            const rotY = (px - 0.5) * 20;
+            const rotX = (0.5 - py) * 20;
+            document.getElementById('pc').style.transform = `rotateX(${rotX}deg) rotateY(${rotY}deg) scale(1.1)`;
         }
 
-        // 互動
-        window.onmousemove = (e) => render(e.clientX / window.innerWidth, e.clientY / window.innerHeight);
+        // 互動監聽
+        window.onmousemove = (e) => {
+            render(e.clientX / window.innerWidth, e.clientY / window.innerHeight);
+        };
     </script>
 </body>
 </html>
