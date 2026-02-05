@@ -3,162 +3,188 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI 智能 3D 深度觀賞器</title>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/body-pix"></script>
+    <title>立體照片觀賞器 - 超細膩版</title>
     <style>
-        :root { --accent: #00d2ff; --bg: #0a0a0a; }
+        :root { --accent: #ffdd59; --bg: #111; }
         body {
             margin: 0; background: var(--bg); color: white;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            min-height: 100vh; overflow: hidden;
+            font-family: sans-serif; display: flex; flex-direction: column; align-items: center;
+            overflow: hidden;
         }
-        
         .viewport {
-            position: relative; width: 90vw; max-width: 500px;
-            perspective: 1200px;
+            position: relative; width: 92vw; max-width: 750px;
+            margin-top: 30px; border-radius: 25px; overflow: hidden;
+            box-shadow: 0 40px 80px rgba(0,0,0,0.9); background: #000;
+        }
+        canvas { 
+            position: absolute; top:0; left:0; width:100%; height:100%; 
+            object-fit: cover;
+            /* 極度平滑的過渡 */
+            transition: transform 0.4s cubic-bezier(0.16, 0.84, 0.44, 1),
+                        opacity 0.4s cubic-bezier(0.16, 0.84, 0.44, 1),
+                        filter 0.3s ease;
+            will-change: transform, opacity, filter;
         }
         
-        .photo-container {
-            position: relative; width: 100%; border-radius: 24px;
-            overflow: hidden; background: #111;
-            box-shadow: 0 40px 100px rgba(0,0,0,0.7);
-            transform-style: preserve-3d;
-            transition: transform 0.15s ease-out;
-        }
+        #canvasL { z-index: 1; }
+        #canvasR { z-index: 2; }
 
-        canvas { width: 100%; display: block; border-radius: 24px; }
-
-        .ui-layer { margin-top: 30px; text-align: center; }
-        
-        .loading-overlay {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.8); display: flex; flex-direction: column;
-            align-items: center; justify-content: center; z-index: 100;
-            display: none;
+        .panel { width: 90%; max-width: 750px; padding: 25px; text-align: center; }
+        .thumb-nav { 
+            display: flex; gap: 15px; overflow-x: auto; padding: 10px; 
+            justify-content: flex-start; scrollbar-width: none;
         }
-
-        .btn-group { display: flex; gap: 10px; justify-content: center; }
-        .upload-btn {
-            background: var(--accent); color: black; padding: 12px 28px;
-            border-radius: 50px; cursor: pointer; font-weight: bold;
+        .thumb-item {
+            flex: 0 0 75px; height: 75px; border-radius: 15px;
+            border: 3px solid #333; overflow: hidden; cursor: pointer; transition: 0.3s;
         }
-        input[type="file"] { display: none; }
+        .thumb-item.active { border-color: var(--accent); transform: scale(1.1); }
+        .thumb-item img { width: 100%; height: 100%; object-fit: cover; }
+
+        #authBtn {
+            padding: 12px 30px; border-radius: 30px; border: none;
+            background: var(--accent); color: #000; font-weight: bold; 
+            cursor: pointer; box-shadow: 0 5px 15px rgba(255, 221, 89, 0.4);
+        }
+        .hint { font-size: 13px; color: #777; margin-top: 15px; }
     </style>
 </head>
 <body>
 
-    <div id="loading" class="loading-overlay">
-        <div style="font-size: 24px; margin-bottom: 10px;">AI 正在掃描人像...</div>
-        <div id="status">模型讀取中...</div>
-    </div>
-
     <div class="viewport" id="vbox">
-        <div class="photo-container" id="pc">
-            <canvas id="mainCanvas"></canvas>
-        </div>
+        <canvas id="canvasL"></canvas>
+        <canvas id="canvasR"></canvas>
     </div>
 
-    <div class="ui-layer">
-        <div class="btn-group">
-            <label class="upload-btn">
-                上傳人像照
-                <input type="file" id="imgInput" accept="image/*">
-            </label>
+    <div class="panel">
+        <div class="thumb-nav" id="thumbNav"></div>
+        <div style="margin: 20px 0;">
+            <button id="authBtn">開啟高級 3D 模式</button>
         </div>
-        <p style="color: #666; font-size: 13px; margin-top: 15px;">模型會自動偵測主體並分離背景</p>
+        <p class="hint">📱 緩慢左右傾斜手機 | 💻 滑鼠在照片上輕柔滑動</p>
     </div>
 
     <script>
-        const canvas = document.getElementById('mainCanvas');
-        const ctx = canvas.getContext('2d');
-        const loading = document.getElementById('loading');
-        let net, originalImg, foregroundMask;
-        let isReady = false;
+        const cvL = document.getElementById('canvasL');
+        const cvR = document.getElementById('canvasR');
+        const ctxL = cvL.getContext('2d');
+        const ctxR = cvR.getContext('2d');
+        const thumbNav = document.getElementById('thumbNav');
+        const authBtn = document.getElementById('authBtn');
+        
+        let images = [];
+        const filenames = ['photo1.jpg', 'photo2.jpg', 'photo3.jpg', 'photo4.jpg', 'photo5.jpg', 'photo6.jpg'];
 
-        // 1. 初始化 AI 模型
-        async function initAI() {
-            document.getElementById('status').innerText = "載入 BodyPix 模型...";
-            loading.style.display = 'flex';
-            net = await bodyPix.load({
-                architecture: 'MobileNetV1',
-                outputStride: 16,
-                multiplier: 0.75,
-                quantBytes: 2
-            });
-            loading.style.display = 'none';
-        }
-        initAI();
-
-        // 2. 處理圖片並進行 AI 分離
-        document.getElementById('imgInput').onchange = async (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-
-            loading.style.display = 'flex';
-            document.getElementById('status').innerText = "分析影像深度...";
-
-            const reader = new FileReader();
-            reader.onload = (event) => {
+        window.onload = () => {
+            filenames.forEach((name, i) => {
                 const img = new Image();
-                img.onload = async () => {
-                    originalImg = img;
-                    // 執行 AI 分離
-                    const segmentation = await net.segmentPerson(img);
-                    foregroundMask = bodyPix.toMask(segmentation);
-                    
-                    // 設定畫布尺寸
-                    canvas.width = img.width;
-                    canvas.height = img.height;
-                    isReady = true;
-                    loading.style.display = 'none';
-                    render(0.5, 0.5);
+                img.src = name;
+                img.onload = () => {
+                    images[i] = img;
+                    const div = document.createElement('div');
+                    div.className = 'thumb-item' + (i===0?' active':'');
+                    div.innerHTML = `<img src="${img.src}">`;
+                    div.onclick = () => loadPhoto(i);
+                    thumbNav.appendChild(div);
+                    if (i === 0) loadPhoto(0);
                 };
-                img.src = event.target.result;
-            };
-            reader.readAsDataURL(file);
+            });
         };
 
-        // 3. 渲染邏輯：前景與背景分離位移
-        function render(px, py) {
-            if (!isReady) return;
-
-            const offX = (px - 0.5) * 50; // 背景位移幅度
-            const offY = (py - 0.5) * 50;
-            const fgX = (px - 0.5) * -15; // 前景反向微動
-
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-            // 繪製背景層 (稍微放大並偏移)
-            ctx.save();
-            ctx.filter = 'blur(4px) brightness(0.7)'; // 背景稍微模糊增加深度
-            ctx.drawImage(originalImg, -25 + offX, -25 + offY, canvas.width + 50, canvas.height + 50);
-            ctx.restore();
-
-            // 繪製前景層 (使用 AI 生成的遮罩)
-            const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = canvas.width;
-            tempCanvas.height = canvas.height;
-            const tCtx = tempCanvas.getContext('2d');
-            
-            // 利用遮罩只畫出人像
-            tCtx.putImageData(foregroundMask, 0, 0);
-            tCtx.globalCompositeOperation = 'source-in';
-            tCtx.drawImage(originalImg, 0, 0);
-
-            ctx.drawImage(tempCanvas, fgX, 0, canvas.width, canvas.height);
-
-            // CSS 3D 容器旋轉
-            const rotY = (px - 0.5) * 20;
-            const rotX = (0.5 - py) * 20;
-            document.getElementById('pc').style.transform = `rotateX(${rotX}deg) rotateY(${rotY}deg) scale(1.1)`;
+        function loadPhoto(index) {
+            const img = images[index];
+            const w = img.width / 2;
+            const h = img.height;
+            cvL.width = cvR.width = w;
+            cvL.height = cvR.height = h;
+            document.getElementById('vbox').style.aspectRatio = `${w}/${h}`;
+            ctxL.drawImage(img, 0, 0, w, h, 0, 0, w, h);
+            ctxR.drawImage(img, w, 0, w, h, 0, 0, w, h);
+            document.querySelectorAll('.thumb-item').forEach((t, i) => t.classList.toggle('active', i === index));
+            update3D(0.5); 
         }
 
-        // 互動監聽
-        window.onmousemove = (e) => {
-            render(e.clientX / window.innerWidth, e.clientY / window.innerHeight);
+        // ✨ 超細膩視差算法
+        function update3D(percent) {
+            const centerOffset = (percent - 0.5); // -0.5 到 0.5
+            
+            // 🎯 關鍵 1：使用 Ease-Out 曲線讓視差更自然
+            const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+            const smoothOffset = centerOffset >= 0 
+                ? easeOut(centerOffset * 2) * 0.5
+                : -easeOut(-centerOffset * 2) * 0.5;
+            
+            // 🎯 關鍵 2：多層次視差（前景/中景/背景）
+            const maxShift = 25;  // 降低位移量，更精細
+            const shiftL = smoothOffset * maxShift * 0.6;  // 左眼慢速
+            const shiftR = smoothOffset * maxShift * 1.4;  // 右眼快速
+            
+            // 🎯 關鍵 3：動態縮放增加深度感
+            const scaleBase = 1.08;
+            const scaleDelta = Math.abs(smoothOffset) * 0.04;
+            const scaleL = scaleBase + scaleDelta * 0.3;
+            const scaleR = scaleBase + scaleDelta * 0.7;
+            
+            cvL.style.transform = `scale(${scaleL}) translateX(${shiftL}px)`;
+            cvR.style.transform = `scale(${scaleR}) translateX(${shiftR}px)`;
+            
+            // 🎯 關鍵 4：S 曲線透明度（不是線性）
+            // 使用 smoothstep 函數創造更自然的混合
+            const smoothstep = (x) => x * x * (3 - 2 * x);
+            const blendFactor = smoothstep(percent);
+            
+            cvR.style.opacity = 0.3 + blendFactor * 0.7;
+            cvL.style.opacity = 0.3 + (1 - blendFactor) * 0.7;
+            
+            // 🎯 關鍵 5：微妙的景深模糊（可選）
+            const blurAmount = Math.abs(centerOffset) * 0.5;
+            cvL.style.filter = `blur(${blurAmount}px)`;
+            cvR.style.filter = `blur(${blurAmount * 0.5}px)`;
+        }
+
+        let targetPercent = 0.5;
+        let currentPercent = 0.5;
+        
+        // 添加慣性滑動效果
+        function animate() {
+            currentPercent += (targetPercent - currentPercent) * 0.15;
+            if (Math.abs(targetPercent - currentPercent) > 0.001) {
+                update3D(currentPercent);
+                requestAnimationFrame(animate);
+            }
+        }
+
+        document.getElementById('vbox').onmousemove = (e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            targetPercent = (e.clientX - rect.left) / rect.width;
+            requestAnimationFrame(animate);
         };
+
+        document.getElementById('vbox').onmouseleave = () => {
+            targetPercent = 0.5;
+            requestAnimationFrame(animate);
+        };
+
+        authBtn.onclick = () => {
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                DeviceOrientationEvent.requestPermission().then(s => {
+                    if(s==='granted') {
+                        window.addEventListener('deviceorientation', handleMove);
+                        authBtn.textContent = '✓ 3D 模式已啟動';
+                        authBtn.style.background = '#4ade80';
+                    }
+                });
+            } else {
+                window.addEventListener('deviceorientation', handleMove);
+                authBtn.style.display = 'none';
+            }
+        };
+
+        function handleMove(e) {
+            if(!e.gamma) return;
+            targetPercent = Math.max(0, Math.min(1, (e.gamma + 20) / 40));
+            requestAnimationFrame(animate);
+        }
     </script>
 </body>
 </html>
