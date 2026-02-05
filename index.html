@@ -3,196 +3,186 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>3D 照片觀賞器 - 智能對焦版</title>
+    <title>全能 3D 深度感觀賞器 (AI + Stereo)</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/body-pix"></script>
     <style>
-        /* 我只補充你原本 CSS 中漏掉或需要微調的部分 */
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-        :root { --primary: #6366f1; --primary-dark: #4f46e5; --accent: #f59e0b; --success: #10b981; --bg: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 100%); --card-bg: rgba(26, 26, 46, 0.8); --text: #f0f0f0; --text-dim: #a0a0b0; }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 20px; overflow-x: hidden; }
-        .header { text-align: center; margin-bottom: 30px; }
-        .viewport { position: relative; width: 100%; max-width: 700px; perspective: 1500px; }
-        .photo-container { position: relative; width: 100%; aspect-ratio: 16/9; border-radius: 24px; overflow: hidden; background: #000; box-shadow: 0 50px 100px rgba(0,0,0,0.5); transform-style: preserve-3d; }
-        canvas { display: block; width: 100%; height: 100%; object-fit: cover; }
-        #canvasL, #canvasR { position: absolute; top: 0; left: 0; width: 100%; height: 100%; will-change: transform, opacity; }
-        .controls { width: 100%; max-width: 700px; background: var(--card-bg); backdrop-filter: blur(20px); border-radius: 24px; padding: 28px; border: 1px solid rgba(255,255,255,0.1); }
-        .mode-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; background: rgba(0,0,0,0.3); padding: 6px; border-radius: 16px; margin-bottom: 20px; }
-        .mode-tab { padding: 16px; border-radius: 12px; cursor: pointer; text-align: center; color: var(--text-dim); transition: 0.3s; }
-        .mode-tab.active { background: var(--primary); color: white; }
-        .upload-zone { border: 2px dashed rgba(255,255,255,0.2); border-radius: 16px; padding: 30px; text-align: center; cursor: pointer; }
-        .thumb-nav { display: flex; gap: 12px; overflow-x: auto; padding: 10px 0; }
-        .thumb-item { flex: 0 0 80px; height: 80px; border-radius: 12px; border: 3px solid rgba(255,255,255,0.2); overflow: hidden; cursor: pointer; }
-        .thumb-item.active { border-color: var(--accent); transform: scale(1.05); }
-        .thumb-item img { width: 100%; height: 100%; object-fit: cover; }
-        .gyro-btn { width: 100%; padding: 16px; border-radius: 14px; background: rgba(255,255,255,0.05); color: white; cursor: pointer; margin: 20px 0; border: 1px solid rgba(255,255,255,0.1); }
-        .gyro-btn.active { background: var(--success); }
+        :root { --accent: #1877f2; --bg: #050505; }
+        body {
+            margin: 0; background: var(--bg); color: white;
+            font-family: sans-serif; display: flex; flex-direction: column; align-items: center;
+            min-height: 100vh; overflow: hidden; justify-content: center;
+        }
+        
+        .viewport {
+            position: relative; width: 90vw; max-width: 600px; perspective: 1500px;
+        }
+        
+        .photo-container {
+            position: relative; width: 100%; border-radius: 20px;
+            overflow: hidden; background: #000;
+            box-shadow: 0 50px 100px rgba(0,0,0,0.8);
+            transform-style: preserve-3d; transition: transform 0.1s;
+        }
+        
+        canvas { width: 100%; display: block; will-change: transform; }
+        
+        /* UI 控制區 */
+        .controls {
+            margin-top: 30px; text-align: center; z-index: 10;
+            background: rgba(255,255,255,0.05); padding: 20px; border-radius: 20px;
+        }
+
+        .mode-switch {
+            display: flex; background: #222; border-radius: 10px; padding: 5px; margin-bottom: 15px;
+        }
+        .mode-btn {
+            flex: 1; padding: 8px; border-radius: 8px; cursor: pointer; font-size: 14px;
+        }
+        .mode-btn.active { background: var(--accent); color: white; }
+
+        .upload-btn {
+            background: white; color: black; padding: 10px 20px;
+            border-radius: 25px; cursor: pointer; font-weight: bold;
+        }
+
+        .loading-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9); display: none; flex-direction: column;
+            align-items: center; justify-content: center; z-index: 100;
+        }
     </style>
 </head>
 <body>
 
-    <div class="header">
-        <div class="logo">🎨</div>
-        <h1>3D 照片觀賞器</h1>
-        <p class="subtitle">智能對焦優化版</p>
+    <div id="loading" class="loading-overlay">
+        <div style="font-size: 20px;">AI 分析中...</div>
     </div>
 
     <div class="viewport" id="vbox">
-        <div class="photo-container" id="photoContainer">
-            <canvas id="canvasSingle" style="display:none;"></canvas>
-            <canvas id="canvasL" style="display:none;"></canvas>
-            <canvas id="canvasR" style="display:none;"></canvas>
+        <div class="photo-container" id="pc">
+            <canvas id="mainCanvas"></canvas>
         </div>
     </div>
 
     <div class="controls">
-        <div class="mode-tabs">
-            <div class="mode-tab" id="tabSingle">📸 單圖深度</div>
-            <div class="mode-tab active" id="tabStereo">👁️ 立體視差</div>
-        </div>
-
-        <div id="singleContent" style="display:none;">
-            <label class="upload-zone">
-                <div style="font-size:40px">📤</div>
-                <div style="font-weight:700">上傳單張照片</div>
-                <input type="file" id="singleUpload" accept="image/*">
-            </label>
+        <div class="mode-switch">
+            <div class="mode-btn active" id="btnAI">AI 自動深度 (單圖)</div>
+            <div class="mode-btn" id="btnStereo">左右眼模式 (雙圖)</div>
         </div>
         
-        <div id="stereoContent">
-            <div class="thumb-nav" id="thumbNav"></div>
-        </div>
-
-        <button class="gyro-btn" id="authBtn">開啟陀螺儀 3D 模式</button>
+        <label class="upload-btn">
+            上傳照片
+            <input type="file" id="imgInput" accept="image/*">
+        </label>
+        
+        <p style="font-size: 12px; color: #666; margin-top: 15px;">移動滑鼠或傾斜手機感受 3D</p>
     </div>
 
     <script>
-        const cvSingle = document.getElementById('canvasSingle');
-        const cvL = document.getElementById('canvasL');
-        const cvR = document.getElementById('canvasR');
-        const ctxS = cvSingle.getContext('2d');
-        const ctxL = cvL.getContext('2d');
-        const ctxR = cvR.getContext('2d');
-        const pc = document.getElementById('photoContainer');
-        const thumbNav = document.getElementById('thumbNav');
-        
-        let currentMode = 'Stereo';
-        let singleImg = null;
-        let stereoImages = [];
-        let targetX = 0.5, targetY = 0.5;
-        let curX = 0.5, curY = 0.5;
+        const canvas = document.getElementById('mainCanvas');
+        const ctx = canvas.getContext('2d');
+        const pc = document.getElementById('pc');
+        let currentMode = 'AI'; // 'AI' 或 'Stereo'
+        let net, originalImg, foregroundMask;
+        let isReady = false;
 
-        // 預設照片
-        const stereoFilenames = ['photo1.jpg', 'photo2.jpg', 'photo3.jpg', 'photo4.jpg'];
+        // 1. 初始化 AI
+        async function loadModel() {
+            net = await bodyPix.load();
+        }
+        loadModel();
 
-        // 1. 初始化導覽列
-        window.onload = () => {
-            stereoFilenames.forEach((name, i) => {
-                const img = new Image();
-                img.src = name;
-                img.onload = () => {
-                    stereoImages[i] = img;
-                    const div = document.createElement('div');
-                    div.className = 'thumb-item' + (i === 0 ? ' active' : '');
-                    div.innerHTML = `<img src="${name}">`;
-                    div.onclick = () => loadStereo(i);
-                    thumbNav.appendChild(div);
-                    if (i === 0) loadStereo(0);
-                };
-            });
-            requestAnimationFrame(animate);
+        // 2. 切換模式邏輯
+        document.getElementById('btnAI').onclick = function() {
+            currentMode = 'AI';
+            this.classList.add('active');
+            document.getElementById('btnStereo').classList.remove('active');
+            if(originalImg) processImage();
+        };
+        document.getElementById('btnStereo').onclick = function() {
+            currentMode = 'Stereo';
+            this.classList.add('active');
+            document.getElementById('btnAI').classList.remove('active');
+            if(originalImg) processImage();
         };
 
-        // 2. 模式切換
-        document.getElementById('tabSingle').onclick = () => switchMode('Single');
-        document.getElementById('tabStereo').onclick = () => switchMode('Stereo');
-
-        function switchMode(mode) {
-            currentMode = mode;
-            document.getElementById('tabSingle').classList.toggle('active', mode === 'Single');
-            document.getElementById('tabStereo').classList.toggle('active', mode === 'Stereo');
-            document.getElementById('singleContent').style.display = mode === 'Single' ? 'block' : 'none';
-            document.getElementById('stereoContent').style.display = mode === 'Stereo' ? 'block' : 'none';
-            
-            cvSingle.style.display = (mode === 'Single') ? 'block' : 'none';
-            cvL.style.display = cvR.style.display = (mode === 'Stereo') ? 'block' : 'none';
-        }
-
-        // 3. 核心渲染邏輯
-        function render() {
-            const mx = (curX - 0.5);
-            const my = (curY - 0.5);
-
-            if (currentMode === 'Single' && singleImg) {
-                ctxS.clearRect(0,0,cvSingle.width, cvSingle.height);
-                // 單圖：背景稍微位移
-                ctxS.drawImage(singleImg, -30 + mx*60, -30 + my*60, cvSingle.width+60, cvSingle.height+60);
-                pc.style.transform = `rotateX(${-my*20}deg) rotateY(${mx*20}deg) scale(1.05)`;
-            } 
-            else if (currentMode === 'Stereo') {
-                // --- 修正模糊位置 ---
-                // 當 mx (位移) 增加時，我們希望「背景」模糊。
-                // 這裡我們假設左右眼重合處（mx=0）是主體。
-                const blurVal = Math.abs(mx) * 2; // 位移越大越模糊
-                
-                // 設定畫布濾鏡：讓兩張圖在晃動時產生輕微景深感
-                // 通常後方的圖層 (CanvasL) 位移感會與 CanvasR 形成視差
-                cvL.style.filter = `blur(${blurVal * 0.5}px)`; 
-                cvR.style.filter = `blur(${blurVal}px)`; 
-
-                // 視差位移與透明度 (S-Curve)
-                const drift = mx * 30;
-                cvL.style.transform = `scale(1.1) translateX(${-drift * 0.5}px)`;
-                cvR.style.transform = `scale(1.1) translateX(${drift * 0.5}px)`;
-                
-                const opacityR = 0.4 + (curX * 0.6);
-                cvR.style.opacity = opacityR;
-                cvL.style.opacity = 1.4 - opacityR;
-
-                pc.style.transform = `rotateX(${-my*15}deg) rotateY(${mx*15}deg) scale(1.02)`;
-            }
-        }
-
-        // 4. 動畫與互動 (保持流暢)
-        function animate() {
-            curX += (targetX - curX) * 0.1;
-            curY += (targetY - curY) * 0.1;
-            render();
-            requestAnimationFrame(animate);
-        }
-
-        function loadStereo(idx) {
-            const img = stereoImages[idx];
-            if(!img) return;
-            const w = img.width/2; const h = img.height;
-            cvL.width = cvR.width = w; cvL.height = cvR.height = h;
-            ctxL.drawImage(img, 0, 0, w, h, 0, 0, w, h);
-            ctxR.drawImage(img, w, 0, w, h, 0, 0, w, h);
-            pc.style.aspectRatio = `${w}/${h}`;
-            document.querySelectorAll('.thumb-item').forEach((t, i) => t.classList.toggle('active', i === idx));
-        }
-
-        document.getElementById('singleUpload').onchange = (e) => {
+        // 3. 處理上傳
+        document.getElementById('imgInput').onchange = (e) => {
             const file = e.target.files[0];
             const reader = new FileReader();
-            reader.onload = (ev) => {
+            reader.onload = (event) => {
                 const img = new Image();
                 img.onload = () => {
-                    singleImg = img;
-                    cvSingle.width = 800; cvSingle.height = 800 * (img.height/img.width);
-                    pc.style.aspectRatio = `${img.width}/${img.height}`;
+                    originalImg = img;
+                    processImage();
                 };
-                img.src = ev.target.result;
+                img.src = event.target.result;
             };
             reader.readAsDataURL(file);
         };
 
-        // 滑鼠與陀螺儀
-        document.getElementById('vbox').onmousemove = (e) => {
-            const r = e.currentTarget.getBoundingClientRect();
-            targetX = (e.clientX - r.left) / r.width;
-            targetY = (e.clientY - r.top) / r.height;
-        };
-        document.getElementById('vbox').onmouseleave = () => { targetX = targetY = 0.5; };
+        async function processImage() {
+            if (!originalImg) return;
+            isReady = false;
+            document.getElementById('loading').style.display = 'flex';
+
+            if (currentMode === 'AI') {
+                const segmentation = await net.segmentPerson(originalImg);
+                foregroundMask = bodyPix.toMask(segmentation);
+                canvas.width = originalImg.width;
+                canvas.height = originalImg.height;
+            } else {
+                canvas.width = originalImg.width / 2;
+                canvas.height = originalImg.height;
+            }
+
+            document.getElementById('loading').style.display = 'none';
+            isReady = true;
+            render(0.5, 0.5);
+        }
+
+        // 4. 核心渲染 (整合兩種演算法)
+        function render(px, py) {
+            if (!isReady) return;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const moveX = (px - 0.5);
+            const moveY = (py - 0.5);
+
+            if (currentMode === 'AI') {
+                // --- AI 模式：背景模糊位移 + 前景固定 ---
+                ctx.save();
+                ctx.filter = 'blur(4px)';
+                ctx.drawImage(originalImg, -20 + moveX*40, -20 + moveY*40, canvas.width+40, canvas.height+40);
+                ctx.restore();
+
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = canvas.width; tempCanvas.height = canvas.height;
+                const tCtx = tempCanvas.getContext('2d');
+                tCtx.putImageData(foregroundMask, 0, 0);
+                tCtx.globalCompositeOperation = 'source-in';
+                tCtx.drawImage(originalImg, 0, 0);
+                ctx.drawImage(tempCanvas, moveX*-10, 0);
+
+            } else {
+                // --- Stereo 模式：左右眼差速 (之前的範例) ---
+                const drift = 30;
+                // 畫左眼底圖
+                ctx.drawImage(originalImg, 0, 0, canvas.width, canvas.height, moveX*-drift, 0, canvas.width, canvas.height);
+                // 畫右眼 (加上遮罩與位移)
+                ctx.save();
+                ctx.globalAlpha = 0.5; // 簡單混合
+                ctx.drawImage(originalImg, canvas.width, 0, canvas.width, canvas.height, moveX*drift, 0, canvas.width, canvas.height);
+                ctx.restore();
+            }
+
+            // 共同的 3D 卡片旋轉
+            pc.style.transform = `rotateX(${-moveY*20}deg) rotateY(${moveX*20}deg) scale(1.05)`;
+        }
+
+        // 互動
+        window.onmousemove = (e) => render(e.clientX / window.innerWidth, e.clientY / window.innerHeight);
     </script>
 </body>
 </html>
